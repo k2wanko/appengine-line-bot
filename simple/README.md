@@ -9,3 +9,9 @@ https://developers.line.me/messaging-api/getting-started
 rename file `line.env.template` to `line.env`
 
 write ChannelSecret and AccessToken to line.env
+
+## Deploy
+
+```
+$ goapp deploy -application <projectID> -version <version name>
+```
