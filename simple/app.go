@@ -16,7 +16,10 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/line/line-bot-sdk-go/linebot"
+	"github.com/line/line-bot-sdk-go/linebot/httphandler"
 )
+
+var botHandler *httphandler.WebhookHandler
 
 func init() {
 	err := godotenv.Load("line.env")
@@ -24,30 +27,19 @@ func init() {
 		panic(err)
 	}
 
-	http.HandleFunc("/callback", handleCallback)
+	botHandler, err = httphandler.New(
+		os.Getenv("LINE_BOT_CHANNEL_SECRET"),
+		os.Getenv("LINE_BOT_CHANNEL_TOKEN"),
+	)
+	botHandler.HandleEvents(handleCallback)
+
+	http.Handle("/callback", botHandler)
 	http.HandleFunc("/task", handleTask)
 }
 
 // handleCallback is Webgook endpoint
-func handleCallback(w http.ResponseWriter, r *http.Request) {
+func handleCallback(evs []*linebot.Event, r *http.Request) {
 	c := newContext(r)
-	bot, err := newLINEBot(c)
-	if err != nil {
-		errorf(c, "newLINEBot: %v", err)
-		return
-	}
-
-	evs, err := bot.ParseRequest(r)
-	if err != nil {
-		errorf(c, "bot.ParseRequest: %v", err)
-		if err == linebot.ErrInvalidSignature {
-			http.Error(w, err.Error(), 400)
-			return
-		}
-		http.Error(w, err.Error(), 500)
-		return
-	}
-
 	ts := make([]*taskqueue.Task, len(evs))
 	for i, e := range evs {
 		j, err := json.Marshal(e)
@@ -60,7 +52,6 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 		ts[i] = t
 	}
 	taskqueue.AddMulti(c, ts, "")
-	w.WriteHeader(204)
 }
 
 // handleTask is process event handler
@@ -91,15 +82,12 @@ func handleTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logf(c, "EventType: %s", e.Type)
+	logf(c, "EventType: %s\nMessage: %#v", e.Type, e.Message)
 
-	src := e.Source
-	if src.Type == linebot.EventSourceTypeUser {
-		m := linebot.NewTextMessage("ok")
-		if _, err = bot.ReplyMessage(e.ReplyToken, m).WithContext(c).Do(); err != nil {
-			errorf(c, "ReplayMessage: %v", err)
-			return
-		}
+	m := linebot.NewTextMessage("ok")
+	if _, err = bot.ReplyMessage(e.ReplyToken, m).WithContext(c).Do(); err != nil {
+		errorf(c, "ReplayMessage: %v", err)
+		return
 	}
 
 	w.WriteHeader(200)
@@ -118,10 +106,9 @@ func newContext(r *http.Request) context.Context {
 }
 
 func newLINEBot(c context.Context) (*linebot.Client, error) {
-	return linebot.New(
-		os.Getenv("LINE_BOT_CHANNEL_SECRET"),
-		os.Getenv("LINE_BOT_CHANNEL_TOKEN"),
-		linebot.WithHTTPClient(urlfetch.Client(c)))
+	return botHandler.NewClient(
+		linebot.WithHTTPClient(urlfetch.Client(c)),
+	)
 }
 
 func isDevServer() bool {
